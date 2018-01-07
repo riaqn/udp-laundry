@@ -1,0 +1,9 @@
+dev : laundry
+peer : 10.8.0.2
+laundries :
+  - name : listen
+    type : tcp-listen
+    src : 10.8.0.2
+    src-port : 443
+    map :
+      - [1984, [127.0.0.1, 8080]]

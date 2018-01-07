@@ -1,0 +1,11 @@
+dev : laundry0
+peer : 10.9.0.2
+laundries :
+  - name : connect
+    type : tcp-connect
+    src : "10.9.0.2"
+    src-port : 55555
+    dst : "10.8.0.2"
+    dst-port : 443
+map :
+  - [8080, [connect, 1984]]
