@@ -71,8 +71,8 @@ connect mgr (src, srcPort) (dst, dstPort) = do
     lift $ C.send conn (hdr, BSL.empty)
     delay <- get
     lift $ threadDelay delay
-    put $ if delay .&. (1 `shiftL` 20) /= 0 then delay else delay `shiftL` 1 -- don't increase more after 1s
-                      ) 8192 -- start with 8ms
+    put $ if delay > 8000000 then delay else delay `shiftL` 1 -- don't increase more after 8s
+                      ) 1000000 -- start with 1s
 
   let loop = do
         (hdr, bs) <- C.recv conn
@@ -86,35 +86,30 @@ connect mgr (src, srcPort) (dst, dstPort) = do
 
 
           seq_ <- atomically $ newTVar $ seq + 1
-          ack_ <- atomically $ newTVar (Just ack)
+          ack_ <- atomically $ newTVar $ ack + 1
 
           return $ laundry conn (seq_, ack_)
           else
           loop
   loop
 
-laundry :: Connection -> (TVar TcpSeqNum, TVar (Maybe TcpAckNum)) -> Laundry
+laundry :: Connection -> (TVar TcpSeqNum, TVar TcpAckNum) -> Laundry
 laundry conn (seq_, ack_) =
   let send_ = \bs -> do
                 seq <- atomically $ do
                   seq <- readTVar seq_
                   writeTVar seq_ $ seq + (fromIntegral $ BSL.length bs) -- TODO: overflow
                   return seq
-                ack <- atomically $ do
-                  ack <- readTVar ack_
-                  writeTVar ack_ Nothing
-                  return ack
-                case ack of
-                  Nothing -> C.send conn (defaultTcpHeader { tcpSeqNum = seq }, bs)
-                  Just ack' -> C.send conn ( set tcpAck True $ defaultTcpHeader { tcpSeqNum = seq
-                                                                                , tcpAckNum = ack'
-                                                                                }
-                                           , bs
-                                           )
+                ack' <- atomically $ readTVar ack_
+                C.send conn ( set tcpAck True $ defaultTcpHeader { tcpSeqNum = seq
+                                                                 , tcpAckNum = ack'
+                                                                 }
+                            , bs
+                            )
       recv_ = do
         (hdr, bs) <- C.recv conn
         let isSYN = view tcpSyn hdr
-        atomically $ writeTVar ack_ $ Just (tcpSeqNum hdr + if isSYN then 1 else fromIntegral $ BSL.length bs) -- TODO: overflow
+        atomically $ writeTVar ack_ $ (tcpSeqNum hdr + if isSYN then 1 else fromIntegral $ BSL.length bs) -- TODO: overflow
         when isSYN $ send_ BSL.empty
         return bs
   in Laundry { send = send_
@@ -148,8 +143,8 @@ server conn acceptQ_= do
     lift $ debugM name "sent SYN+ACK"
     delay <- get
     lift $ threadDelay delay
-    put $ if delay .&. (1 `shiftL` 20) /= 0 then delay else delay `shiftL` 1
-    ) 8192
+    put $ if delay > 8000000 then delay else delay `shiftL` 1
+    ) 1000000
 
   -- wait for the third pkt, ACK
   let wait_ack = do
@@ -160,7 +155,7 @@ server conn acceptQ_= do
           wait_ack
   wait_ack
   debugM name $ "recvd final ACK"
-  ack_ <- atomically $ newTVar Nothing
+  ack_ <- atomically $ newTVar $ ack + 1
   seq_ <- atomically $ newTVar $ seq + 1
 
   atomically $ putTMVar acceptQ_ $ laundry conn (seq_, ack_)
